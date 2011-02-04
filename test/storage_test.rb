@@ -131,7 +131,7 @@ class StorageTest < Test::Unit::TestCase
       @dummy = Dummy.new
       @dummy.avatar = StringIO.new(".")
 
-      AWS::S3::S3Object.expects(:url_for).with("avatars/stringio.txt", "prod_bucket", { :expires_in => 3600 })
+      AWS::S3::S3Object.expects(:url_for).with("avatars/stringio.txt", "prod_bucket", { :expires_in => 3600, :use_ssl => true })
 
       @dummy.avatar.expiring_url
     end
@@ -334,6 +334,129 @@ class StorageTest < Test::Unit::TestCase
       assert_equal 'env_bucket', @dummy.avatar.bucket_name
       assert_equal 'env_key', AWS::S3::Base.connection.options[:access_key_id]
       assert_equal 'env_secret', AWS::S3::Base.connection.options[:secret_access_key]
+    end
+  end
+  
+  context "S3 Permissions" do
+    context "defaults to public-read" do
+      setup do
+        rebuild_model :storage => :s3,
+                      :bucket => "testing",
+                      :path => ":attachment/:style/:basename.:extension",
+                      :s3_credentials => {
+                        'access_key_id' => "12345",
+                        'secret_access_key' => "54321"
+                      }
+      end
+
+      context "when assigned" do
+        setup do
+          @file = File.new(File.join(File.dirname(__FILE__), 'fixtures', '5k.png'), 'rb')
+          @dummy = Dummy.new
+          @dummy.avatar = @file
+        end
+
+        teardown { @file.close }
+
+        context "and saved" do
+          setup do
+            AWS::S3::Base.stubs(:establish_connection!)
+            AWS::S3::S3Object.expects(:store).with(@dummy.avatar.path,
+                                                 anything,
+                                                 'testing',
+                                                 :content_type => 'image/png',
+                                                 :access => :public_read)
+            @dummy.save
+          end
+
+          should "succeed" do
+            assert true
+          end
+        end
+      end
+    end
+
+    context "string permissions set" do
+      setup do
+        rebuild_model :storage => :s3,
+                      :bucket => "testing",
+                      :path => ":attachment/:style/:basename.:extension",
+                      :s3_credentials => {
+                        'access_key_id' => "12345",
+                        'secret_access_key' => "54321"
+                      },
+                      :s3_permissions => 'private'
+      end
+    
+      context "when assigned" do
+        setup do
+          @file = File.new(File.join(File.dirname(__FILE__), 'fixtures', '5k.png'), 'rb')
+          @dummy = Dummy.new
+          @dummy.avatar = @file
+        end
+    
+        teardown { @file.close }
+    
+        context "and saved" do
+          setup do
+            AWS::S3::Base.stubs(:establish_connection!)
+            AWS::S3::S3Object.expects(:store).with(@dummy.avatar.path,
+                                                   anything,
+                                                   'testing',
+                                                   :content_type => 'image/png',
+                                                   :access => 'private')
+            @dummy.save
+          end
+    
+          should "succeed" do
+            assert true
+          end
+        end
+      end
+    end
+    
+    context "hash permissions set" do
+      setup do
+        rebuild_model :storage => :s3,
+                      :bucket => "testing",
+                      :path => ":attachment/:style/:basename.:extension",
+                      :styles => {
+                         :thumb => "80x80>"
+                      },
+                      :s3_credentials => {
+                        'access_key_id' => "12345",
+                        'secret_access_key' => "54321"
+                      },
+                      :s3_permissions => {:original => 'private', :thumb => 'public-read'}
+      end
+    
+      context "when assigned" do
+        setup do
+          @file = File.new(File.join(File.dirname(__FILE__), 'fixtures', '5k.png'), 'rb')
+          @dummy = Dummy.new
+          @dummy.avatar = @file
+        end
+    
+        teardown { @file.close }
+    
+        context "and saved" do
+          setup do
+              AWS::S3::Base.stubs(:establish_connection!)
+            [:thumb, :original].each do |style|
+              AWS::S3::S3Object.expects(:store).with("avatars/#{style}/5k.png",
+                                                    anything,
+                                                    'testing',
+                                                    :content_type => 'image/png',
+                                                    :access => style == :thumb ? 'public-read' : 'private')
+            end
+            @dummy.save
+          end
+    
+          should "succeed" do
+            assert true
+          end
+        end
+      end
     end
   end
 
